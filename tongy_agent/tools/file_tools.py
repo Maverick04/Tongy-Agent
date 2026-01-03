@@ -4,6 +4,7 @@ File operation tools for Tongy-Agent.
 Provides Read, Write, and Edit tools for file manipulation.
 """
 
+import difflib
 import os
 from pathlib import Path
 from typing import Any
@@ -12,17 +13,52 @@ from tongy_agent.schema.schema import ToolResult
 from tongy_agent.tools.base import Tool
 
 
+def _generate_unified_diff(
+    old_text: str,
+    new_text: str,
+    filepath: str = "file",
+    context_lines: int = 3
+) -> str:
+    """
+    Generate a unified diff between two texts.
+
+    Args:
+        old_text: Original text
+        new_text: Modified text
+        filepath: File path for display in diff header
+        context_lines: Number of context lines to show
+
+    Returns:
+        Unified diff string
+    """
+    old_lines = old_text.splitlines(keepends=True)
+    new_lines = new_text.splitlines(keepends=True)
+
+    diff = difflib.unified_diff(
+        old_lines,
+        new_lines,
+        fromfile=f"a/{filepath}",
+        tofile=f"b/{filepath}",
+        lineterm="",
+        n=context_lines
+    )
+
+    return "".join(diff)
+
+
 class ReadFileTool(Tool):
     """Tool for reading file contents."""
 
-    def __init__(self, sandbox: Any = None):
+    def __init__(self, sandbox: Any = None, workspace_dir: str = "./workspace"):
         """
         Initialize the ReadFile tool.
 
         Args:
             sandbox: Optional sandbox for access control
+            workspace_dir: Workspace directory path
         """
         self.sandbox = sandbox
+        self.workspace_dir = Path(workspace_dir).absolute()
 
     @property
     def name(self) -> str:
@@ -58,20 +94,36 @@ Returns the file contents as a text string."""
             "required": ["path"],
         }
 
+    def _resolve_path(self, path: str) -> Path:
+        """
+        Resolve a path relative to workspace directory.
+
+        Args:
+            path: File path (can be absolute or relative)
+
+        Returns:
+            Resolved absolute path
+        """
+        path_obj = Path(path).expanduser()
+        if path_obj.is_absolute():
+            return path_obj
+        return self.workspace_dir / path_obj
+
     async def execute(self, path: str, offset: int = 0, limit: int = 0) -> ToolResult:
         """Execute the file read operation."""
         try:
+            # Resolve path relative to workspace
+            file_path = self._resolve_path(path)
+
             # Sandbox check
             if self.sandbox:
-                allowed, reason = self.sandbox.is_allowed(path)
+                allowed, reason = self.sandbox.is_allowed(file_path)
                 if not allowed:
                     return ToolResult(success=False, content="", error=reason)
 
-                size_ok, size_reason = self.sandbox.check_file_size(path)
+                size_ok, size_reason = self.sandbox.check_file_size(file_path)
                 if not size_ok:
                     return ToolResult(success=False, content="", error=size_reason)
-
-            file_path = Path(path).expanduser()
 
             if not file_path.exists():
                 return ToolResult(
@@ -115,14 +167,16 @@ Returns the file contents as a text string."""
 class WriteFileTool(Tool):
     """Tool for writing to files."""
 
-    def __init__(self, sandbox: Any = None):
+    def __init__(self, sandbox: Any = None, workspace_dir: str = "./workspace"):
         """
         Initialize the WriteFile tool.
 
         Args:
             sandbox: Optional sandbox for access control
+            workspace_dir: Workspace directory path
         """
         self.sandbox = sandbox
+        self.workspace_dir = Path(workspace_dir).absolute()
 
     @property
     def name(self) -> str:
@@ -133,7 +187,8 @@ class WriteFileTool(Tool):
         return """Write content to a file.
 
 Creates the file if it doesn't exist, overwrites if it does.
-Use this tool to create new files or completely replace existing file contents."""
+Use this tool to create new files or completely replace existing file contents.
+Paths are relative to the workspace directory unless absolute."""
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -142,7 +197,7 @@ Use this tool to create new files or completely replace existing file contents."
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the file to write",
+                    "description": "Path to the file to write (relative to workspace unless absolute)",
                 },
                 "content": {
                     "type": "string",
@@ -152,16 +207,32 @@ Use this tool to create new files or completely replace existing file contents."
             "required": ["path", "content"],
         }
 
+    def _resolve_path(self, path: str) -> Path:
+        """
+        Resolve a path relative to workspace directory.
+
+        Args:
+            path: File path (can be absolute or relative)
+
+        Returns:
+            Resolved absolute path
+        """
+        path_obj = Path(path).expanduser()
+        if path_obj.is_absolute():
+            return path_obj
+        return self.workspace_dir / path_obj
+
     async def execute(self, path: str, content: str) -> ToolResult:
         """Execute the file write operation."""
         try:
+            # Resolve path relative to workspace
+            file_path = self._resolve_path(path)
+
             # Sandbox check
             if self.sandbox:
-                allowed, reason = self.sandbox.is_allowed(path)
+                allowed, reason = self.sandbox.is_allowed(file_path)
                 if not allowed:
                     return ToolResult(success=False, content="", error=reason)
-
-            file_path = Path(path).expanduser()
 
             # Create parent directories if they don't exist
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,14 +263,16 @@ Use this tool to create new files or completely replace existing file contents."
 class EditFileTool(Tool):
     """Tool for editing files with exact string replacement."""
 
-    def __init__(self, sandbox: Any = None):
+    def __init__(self, sandbox: Any = None, workspace_dir: str = "./workspace"):
         """
         Initialize the EditFile tool.
 
         Args:
             sandbox: Optional sandbox for access control
+            workspace_dir: Workspace directory path
         """
         self.sandbox = sandbox
+        self.workspace_dir = Path(workspace_dir).absolute()
 
     @property
     def name(self) -> str:
@@ -211,7 +284,8 @@ class EditFileTool(Tool):
 
 Use this tool to make specific edits to existing files.
 The old_string must match exactly (including whitespace).
-Use replace_all=true to replace all occurrences."""
+Use replace_all=true to replace all occurrences.
+Paths are relative to the workspace directory unless absolute."""
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -220,7 +294,7 @@ Use replace_all=true to replace all occurrences."""
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the file to edit",
+                    "description": "Path to the file to edit (relative to workspace unless absolute)",
                 },
                 "old_string": {
                     "type": "string",
@@ -239,6 +313,21 @@ Use replace_all=true to replace all occurrences."""
             "required": ["path", "old_string", "new_string"],
         }
 
+    def _resolve_path(self, path: str) -> Path:
+        """
+        Resolve a path relative to workspace directory.
+
+        Args:
+            path: File path (can be absolute or relative)
+
+        Returns:
+            Resolved absolute path
+        """
+        path_obj = Path(path).expanduser()
+        if path_obj.is_absolute():
+            return path_obj
+        return self.workspace_dir / path_obj
+
     async def execute(
         self,
         path: str,
@@ -248,17 +337,18 @@ Use replace_all=true to replace all occurrences."""
     ) -> ToolResult:
         """Execute the file edit operation."""
         try:
+            # Resolve path relative to workspace
+            file_path = self._resolve_path(path)
+
             # Sandbox check
             if self.sandbox:
-                allowed, reason = self.sandbox.is_allowed(path)
+                allowed, reason = self.sandbox.is_allowed(file_path)
                 if not allowed:
                     return ToolResult(success=False, content="", error=reason)
 
-                size_ok, size_reason = self.sandbox.check_file_size(path)
+                size_ok, size_reason = self.sandbox.check_file_size(file_path)
                 if not size_ok:
                     return ToolResult(success=False, content="", error=size_reason)
-
-            file_path = Path(path).expanduser()
 
             if not file_path.exists():
                 return ToolResult(
@@ -290,9 +380,17 @@ Use replace_all=true to replace all occurrences."""
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
 
+            # Generate unified diff
+            diff_output = _generate_unified_diff(content, new_content, path)
+
+            # Format the result message
+            result_msg = f"Replaced {count} occurrence(s) in {path}"
+            if diff_output:
+                result_msg += f"\n\n---\n{diff_output}"
+
             return ToolResult(
                 success=True,
-                content=f"Replaced {count} occurrence(s) in {path}",
+                content=result_msg,
             )
 
         except PermissionError:
@@ -312,14 +410,16 @@ Use replace_all=true to replace all occurrences."""
 class ListDirectoryTool(Tool):
     """Tool for listing directory contents."""
 
-    def __init__(self, sandbox: Any = None):
+    def __init__(self, sandbox: Any = None, workspace_dir: str = "./workspace"):
         """
         Initialize the ListDirectory tool.
 
         Args:
             sandbox: Optional sandbox for access control
+            workspace_dir: Workspace directory path
         """
         self.sandbox = sandbox
+        self.workspace_dir = Path(workspace_dir).absolute()
 
     @property
     def name(self) -> str:
@@ -329,7 +429,8 @@ class ListDirectoryTool(Tool):
     def description(self) -> str:
         return """List the contents of a directory.
 
-Returns a list of files and directories in the specified path."""
+Returns a list of files and directories in the specified path.
+Paths are relative to the workspace directory unless absolute."""
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -338,22 +439,38 @@ Returns a list of files and directories in the specified path."""
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the directory to list",
+                    "description": "Path to the directory to list (relative to workspace unless absolute)",
                 },
             },
             "required": ["path"],
         }
 
+    def _resolve_path(self, path: str) -> Path:
+        """
+        Resolve a path relative to workspace directory.
+
+        Args:
+            path: Directory path (can be absolute or relative)
+
+        Returns:
+            Resolved absolute path
+        """
+        path_obj = Path(path).expanduser()
+        if path_obj.is_absolute():
+            return path_obj
+        return self.workspace_dir / path_obj
+
     async def execute(self, path: str) -> ToolResult:
         """Execute the directory listing operation."""
         try:
+            # Resolve path relative to workspace
+            dir_path = self._resolve_path(path)
+
             # Sandbox check
             if self.sandbox:
-                allowed, reason = self.sandbox.is_allowed(path)
+                allowed, reason = self.sandbox.is_allowed(dir_path)
                 if not allowed:
                     return ToolResult(success=False, content="", error=reason)
-
-            dir_path = Path(path).expanduser()
 
             if not dir_path.exists():
                 return ToolResult(

@@ -122,17 +122,20 @@ class TongyAgentCLI:
             memory=self.memory,
             sandbox=self.sandbox,
             verbose=self.config.agent.verbose,
+            display_output=True,  # Enable Agent to display responses and tool calls
+            interactive=True,  # Enable step-by-step confirmation
         )
 
     def _create_tools(self) -> list[Any]:
         """Create the tool list."""
+        workspace = self.config.agent.workspace_dir
         tools = [
-            ReadFileTool(sandbox=self.sandbox),
-            WriteFileTool(sandbox=self.sandbox),
-            EditFileTool(sandbox=self.sandbox),
-            ListDirectoryTool(sandbox=self.sandbox),
-            BashTool(sandbox=self.sandbox, cwd=self.config.agent.workspace_dir),
-            TodoWriteTool(workspace_dir=self.config.agent.workspace_dir),
+            ReadFileTool(sandbox=self.sandbox, workspace_dir=workspace),
+            WriteFileTool(sandbox=self.sandbox, workspace_dir=workspace),
+            EditFileTool(sandbox=self.sandbox, workspace_dir=workspace),
+            ListDirectoryTool(sandbox=self.sandbox, workspace_dir=workspace),
+            BashTool(sandbox=self.sandbox, cwd=workspace),
+            TodoWriteTool(workspace_dir=workspace),
         ]
 
         return tools
@@ -258,9 +261,6 @@ Type [bold]/help[/bold] for commands, [bold]/quit[/bold] to exit.
 
                     self.agent.add_user_message(user_input)
                     response = await self.agent.run()
-
-                    # Display response
-                    self.display_response(response)
 
                     console.print()  # Blank line for separation
 

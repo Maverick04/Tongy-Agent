@@ -25,6 +25,9 @@ console_handler.setFormatter(console_formatter)
 # Add console handler to root logger
 root_logger.addHandler(console_handler)
 
+# Suppress httpx INFO logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 

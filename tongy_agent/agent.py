@@ -5,9 +5,17 @@ The main Agent class that orchestrates LLM interactions, tool execution,
 and conversation management.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.shortcuts import confirm
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.syntax import Syntax
 
 from tongy_agent.llm.base import LLMClientBase
 from tongy_agent.logger import AgentLogger
@@ -17,6 +25,8 @@ from tongy_agent.schema.schema import LLMResponse, Message, ToolCall, ToolResult
 from tongy_agent.tools.base import Tool
 
 logger = logging.getLogger(__name__)
+console = Console()
+prompt_session = PromptSession()
 
 
 class Agent:
@@ -37,6 +47,8 @@ class Agent:
         memory: RepositoryMemory | None = None,
         sandbox: Sandbox | None = None,
         verbose: bool = False,
+        display_output: bool = True,
+        interactive: bool = True,
     ):
         """
         Initialize the Agent.
@@ -51,6 +63,8 @@ class Agent:
             memory: Optional repository memory system
             sandbox: Optional sandbox for security
             verbose: Enable verbose logging
+            display_output: Display responses and tool calls to console
+            interactive: Require user confirmation after each step
         """
         self.llm = llm_client
         self.tools = {tool.name: tool for tool in tools}
@@ -60,6 +74,8 @@ class Agent:
         self.memory = memory
         self.sandbox = sandbox
         self.verbose = verbose
+        self.display_output = display_output
+        self.interactive = interactive
 
         # Initialize logger
         self.logger = AgentLogger(verbose=verbose)
@@ -125,7 +141,8 @@ class Agent:
         1. Check token limit and summarize if needed
         2. Call LLM
         3. Execute any requested tools
-        4. Repeat until done or max_steps reached
+        4. Ask user for confirmation (if interactive)
+        5. Repeat until done or max_steps reached
 
         Returns:
             Final response content
@@ -148,10 +165,24 @@ class Agent:
             if not response.tool_calls:
                 # Final response
                 self.logger.log_info(f"Agent finished: {response.finish_reason}")
+                if self.display_output:
+                    console.print(Panel("[green]✓ Task completed successfully![/green]", border_style="green"))
                 return response.content
 
             # Execute tools
             await self._execute_tools(response.tool_calls)
+
+            # Step completed notification
+            if self.display_output:
+                console.print(Panel(f"[cyan]Step {step + 1} completed[/cyan]", border_style="cyan"))
+
+            # Ask for user confirmation if interactive
+            if self.interactive:
+                should_continue = await self._ask_continue()
+                if not should_continue:
+                    if self.display_output:
+                        console.print("[yellow]Operation cancelled by user.[/yellow]")
+                    return "Operation cancelled by user."
 
             step += 1
 
@@ -192,6 +223,10 @@ class Agent:
             finish_reason=response.finish_reason,
         )
 
+        # Display response content to user
+        if self.display_output and response.content:
+            console.print(Panel(Markdown(response.content), title="Assistant", border_style="blue"))
+
         # Add assistant message
         self.messages.append(Message(
             role="assistant",
@@ -212,6 +247,11 @@ class Agent:
             tool_name = tool_call.function.name
             arguments = tool_call.function.arguments
 
+            # Display tool call to user
+            if self.display_output:
+                args_str = ", ".join(f"{k}={v!r}" for k, v in arguments.items())
+                console.print(f"[cyan]🔧 Calling:[/cyan] {tool_name}({args_str})")
+
             # Check if tool exists
             if tool_name not in self.tools:
                 result = ToolResult(
@@ -220,6 +260,8 @@ class Agent:
                     error=f"Unknown tool: {tool_name}",
                 )
                 self._add_tool_result(tool_call, tool_name, result)
+                if self.display_output:
+                    console.print(f"[red]❌ Error: {result.error}[/red]")
                 continue
 
             # Get tool
@@ -235,6 +277,30 @@ class Agent:
                     content="",
                     error=str(e),
                 )
+
+            # Display tool result
+            if self.display_output:
+                if result.success:
+                    # Special handling for edit_file with diff output
+                    if tool_name == "edit_file" and "---" in result.content:
+                        parts = result.content.split("\n\n---\n", 1)
+                        summary = parts[0]
+                        console.print(f"[green]✓ {summary}[/green]")
+                        if len(parts) > 1:
+                            diff_content = parts[1]
+                            # Display diff in a panel with syntax highlighting
+                            console.print(Panel(
+                                Syntax(diff_content, "diff", theme="monokai"),
+                                title="Diff",
+                                border_style="cyan",
+                                padding=(0, 0)
+                            ))
+                    else:
+                        # Show truncated result for other tools
+                        result_preview = result.content[:200] + "..." if len(result.content) > 200 else result.content
+                        console.print(f"[green]✓ Result:[/green] {result_preview}")
+                else:
+                    console.print(f"[red]❌ Error:[/red] {result.error}")
 
             # Log result
             self.logger.log_tool_result(
@@ -265,6 +331,25 @@ class Agent:
             tool_call_id=tool_call.id,
             name=tool_name,
         ))
+
+    async def _ask_continue(self) -> bool:
+        """
+        Ask user if they want to continue to the next step.
+
+        Returns:
+            True if user wants to continue, False otherwise
+        """
+        try:
+            # Use prompt_toolkit confirm for better UX
+            result = await confirm("Continue to next step?")
+            return result
+        except (KeyboardInterrupt, EOFError):
+            # User pressed Ctrl+C or Ctrl+D
+            return False
+        except Exception as e:
+            # Fallback to default behavior
+            logger.debug(f"Confirm prompt failed: {e}, continuing")
+            return True
 
     async def _maybe_summarize_messages(self):
         """Summarize messages if approaching token limit."""
