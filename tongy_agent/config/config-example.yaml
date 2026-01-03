@@ -1,0 +1,69 @@
+# Tongy-Agent Configuration Example
+# Copy this file to config.yaml and update with your settings
+
+# LLM Configuration
+llm:
+  provider: zhipu  # Currently only zhipu is supported
+  api_key: "YOUR_API_KEY_HERE"  # Get from https://open.bigmodel.cn/
+  api_base: "https://open.bigmodel.cn/api/paas/v4/"
+  model: "glm-4.7"
+  timeout: 120
+  max_tokens: 16384
+  temperature: 0.7
+
+  # Retry configuration
+  retry:
+    enabled: true
+    max_retries: 3
+    initial_delay: 1.0
+    max_delay: 10.0
+    exponential_base: 2.0
+
+# Agent Configuration
+agent:
+  max_steps: 50  # Maximum number of agent iterations
+  token_limit: 80000  # Context token limit
+  workspace_dir: "./workspace"  # Default workspace directory
+  enable_memory: true  # Enable repository memory
+  enable_sandbox: true  # Enable security sandbox
+  verbose: false  # Enable verbose logging
+
+# Tools Configuration
+tools:
+  enable_mcp: true  # Enable MCP server integration
+  enable_skills: true  # Enable Claude Skills
+  mcp_servers: []  # List of MCP servers to load
+  # Example:
+  # - name: filesystem
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/allowed/path"]
+
+  skills_path: null  # Path to Claude Skills directory
+
+# Sandbox Configuration
+sandbox:
+  # File access control
+  allowed_paths: []  # Paths where file access is allowed (empty = all except forbidden)
+  forbidden_paths: []  # Paths where file access is never allowed
+  max_file_size: 10485760  # Maximum file size in bytes (10MB)
+
+  # Command execution control
+  allowed_commands: []  # Commands that are allowed (empty = all except forbidden)
+  forbidden_commands:  # Commands that are never allowed
+    - rm
+    - rmdir
+    - del
+    - delete
+    - format
+    - mkfs
+    - fdisk
+    - dd
+    - shutdown
+    - reboot
+    - halt
+    - poweroff
+    - kill
+    - killall
+
+  # Network access
+  allow_network_access: false  # Whether tools can access the network
